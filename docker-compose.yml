@@ -5,7 +5,8 @@ services:
     ports:
       - '3000:3000'
     # .env* files are dockerignored, so env is provided at runtime here.
-    # Create it first: cp .env.example .env.local
+    # Optional: cp .env.example .env.local to customize SITE_URL
     env_file:
-      - .env.local
+      - path: .env.local
+        required: false
     restart: unless-stopped

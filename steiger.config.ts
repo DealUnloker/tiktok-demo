@@ -8,6 +8,9 @@ export default defineConfig([
 			'fsd/public-api': 'off',
 			'fsd/no-public-api-sidestep': 'off',
 			'fsd/insignificant-slice': 'warn',
+			// `providers` is the conventional app-layer segment name in FSD;
+			// the 0.7 plugin's segments-by-purpose rule flags it anyway.
+			'fsd/segments-by-purpose': 'off',
 		},
 	},
 ])

@@ -16,7 +16,6 @@ const env = createEnv({
 	 * Will throw if you access these variables on the client.
 	 */
 	server: {
-		API_URL: z.url(),
 		// Public site origin for robots.txt / sitemap.xml. Those routes are
 		// force-dynamic, so this is read (and the default applied) at runtime.
 		SITE_URL: z.url().default('http://localhost:3000'),

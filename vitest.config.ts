@@ -4,7 +4,7 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
 	plugins: [react()],
 	resolve: {
-		// Resolves the tsconfig `@/` and `@generated/` path aliases natively
+		// Resolves the tsconfig `@/` path alias natively
 		tsconfigPaths: true,
 	},
 	test: {

@@ -12,7 +12,6 @@
 - `pnpm test:coverage` — Vitest with V8 coverage (`src/**`)
 - `pnpm test:e2e` — Playwright e2e (builds and starts the app itself)
 - `pnpm run fsd` — validate FSD architecture via steiger
-- `pnpm generate-api` — regenerate API client from OpenAPI spec (Hey API)
 
 ## Architecture
 
@@ -23,22 +22,22 @@ Next.js 16 App Router with Feature-Sliced Design (FSD).
 ```
 src/
   app/        — providers (app-providers.tsx wires them together)
-  pages/      — page compositions (home — SSR prefetch example)
-  widgets/    — composite UI blocks (pet-details)
-  features/   — user interactions (select-pet)
-  entities/   — business entities (pet — QO pattern example)
-  shared/     — api client, config, lib (cn()), ui (shadcn components)
+  pages/      — page compositions (home)
+  shared/     — api (React Query client), config, lib (cn()), ui (shadcn components)
 ```
+
+Add `entities/`, `features/`, and `widgets/` under `src/` as the app grows.
 
 ### FSD rules (enforced by steiger, see `steiger.config.ts`)
 
 - Preset: `fsd.configs.recommended` with overrides:
   - `fsd/public-api: off` and `fsd/no-public-api-sidestep: off` — **no `index.ts`
     barrel files in slices**. Import directly from segment paths, e.g.
-    `@/entities/pet/api/pet.options`, `@/widgets/pet-details/ui/pet-details`.
-    Do not create slice `index.ts` files.
+    `@/pages/home/ui/home-page`. Do not create slice `index.ts` files.
   - `fsd/insignificant-slice: warn` — a slice referenced from only one place
     is a warning, not an error (expected for template examples).
+  - `fsd/segments-by-purpose: off` — the conventional `providers` segment in
+    the app layer would be flagged otherwise.
 - Layer imports go strictly downward only:
   pages → widgets → features → entities → shared. A slice must not import from
   its own layer (e.g. entity → entity) or any layer above.
@@ -60,7 +59,6 @@ src/
 ### Path aliases
 
 - `@/*` maps to `./src/*`
-- `@generated/*` maps to `./generated/*`
 
 ## Code style (Biome)
 
@@ -80,89 +78,57 @@ src/
 ## Testing
 
 - **Vitest** + **Testing Library** (jsdom), config in `vitest.config.ts`
-  (`resolve.tsconfigPaths: true` resolves the `@/` and `@generated/` aliases).
+  (`resolve.tsconfigPaths: true` resolves the `@/` alias).
 - Tests are colocated with slices: `src/**/*.test.{ts,tsx}`
-  (example: `src/entities/pet/ui/pet-card.test.tsx`).
+  (example: `src/shared/lib/utils.test.ts`).
 - **Playwright** e2e tests live in `e2e/` (`*.spec.ts`), config in
   `playwright.config.ts` — its `webServer` runs `pnpm build-start` locally
   (reusing an already-running server on :3000) and `pnpm start` in CI, where
   the build step has already run. Chromium only by default.
-- E2E depends on the **live** Petstore API: the build step prefetches it (ISR
-  prerender), and background revalidations hit it too. Runs need network
-  access and can flake if the sandbox misbehaves; CI retries twice.
 
 ## UI stack
 
 - **shadcn** v4 (base-nova style, Base UI primitives) — components install to `src/shared/ui/`
 - **Tailwind CSS v4** with OKLCh color system (CSS variables, neutral base).
   Light theme only — there is no dark mode; do not add `dark:` variants.
-- **Lucide** icons (see `src/entities/pet/ui/pet-card.tsx`, `app/loading.tsx`)
+- **Lucide** icons (see `app/loading.tsx`)
 - **sonner** toasts — `<Toaster />` is mounted in `app/layout.tsx`
-  (`src/shared/ui/sonner.tsx`); fire with `toast(...)` (demo in
-  `src/features/select-pet/ui/pet-id-select.tsx`)
+  (`src/shared/ui/sonner.tsx`); fire with `toast(...)`
 - **class-variance-authority** + **clsx** + **tailwind-merge** for class composition (`cn()` in `src/shared/lib/utils.ts`)
 
 To add a shadcn component: `pnpx shadcn@latest add <component>`
 
 ## Data fetching
 
-- **Hey API (OpenAPI-TS)** — generates typed client, Zod schemas, and React
-  Query options from the OpenAPI spec into `generated/backend-api/`. Spec URL
-  is `${API_URL}/${SPEC_PATH}` (see `openapi-ts.config.ts`); `API_URL` comes
-  from the validated env (`src/shared/config/env.ts`), so `.env.local` is
-  required for generation. Note: the config imports env via a relative path,
-  not the `@/` alias — jiti (the config loader) doesn't resolve tsconfig paths.
-  Zod response validation is enabled. Note: Petstore is a public sandbox with
-  user-mutable data, so some records violate the spec and fail validation —
-  the demo fetches pets by ID from a known-good list
-  (`src/features/select-pet/model/demo-pet-ids.ts`).
-- **TanStack React Query v5** — `QueryClient` factory at `src/shared/api/query-client.ts`
-  (used by both the client provider and SSR prefetch). Its query/mutation caches log
-  Zod response-validation failures via `src/shared/api/log-validation-error.ts` —
-  in the browser console and in the server console during SSR prefetch, where
-  errors are otherwise swallowed.
-- **API client context** — `ApiClientProvider` + `useApiClient()` at `src/shared/api/`;
-  server components use `createBackendApiClients()` from `src/shared/api/server-api-client.ts`.
-- **Entity QO pattern** — entity options wrap generated Hey API queryOptions and
-  take the client as an argument (see `src/entities/pet/api/pet.options.ts`).
-- **SSR prefetch** — server page compositions use `QueryClient` + `prefetchQuery` +
-  `dehydrate` + `HydrationBoundary` (see `src/pages/home/ui/home-page.tsx`).
-  Routes that prefetch API data must opt out of plain static prerendering in
-  their `app/` route file, otherwise Next ships a frozen build-time snapshot.
-  The home route uses ISR (`export const revalidate = 60` in `app/page.tsx`):
-  responses come from cache instantly and regenerate in the background. Use
-  `dynamic = 'force-dynamic'` instead when data must be per-request fresh —
-  but note the whole page then blocks on the API (visitors see `loading.tsx`
-  until it responds).
+- **TanStack React Query v5** — `QueryClient` factory at `src/shared/api/query-client.ts`,
+  client provider at `src/app/providers/query-provider.tsx`. No backend is wired
+  up: add your own API layer under `src/shared/api/` and entity query options
+  under `src/entities/*/api/` when connecting one.
+- For SSR prefetch, use `QueryClient` + `prefetchQuery` + `dehydrate` +
+  `HydrationBoundary` in a server page composition, and opt the route out of
+  plain static prerendering in its `app/` route file (ISR via
+  `export const revalidate = N`, or `dynamic = 'force-dynamic'` for
+  per-request-fresh data).
 
 ## Environment
 
-- Validated via t3-env in `src/shared/config/env.ts` (`API_URL` required, server-only).
-- `API_URL` is intentionally NOT `NEXT_PUBLIC_`: it stays swappable at container
-  runtime (no build-time inlining) while still reaching the browser as a prop
-  through `ApiClientProvider` (SSR prefetch on the server, direct API calls on
-  the client). Do not convert it to a public env var.
+- Validated via t3-env in `src/shared/config/env.ts`.
 - `SITE_URL` (optional, server-only, defaults to `http://localhost:3000`) —
   public origin for robots.txt/sitemap.xml. Those routes are `force-dynamic`,
-  so it is read at runtime like `API_URL` (swappable per container). The Zod
-  default applies at runtime, where validation runs — do not turn these routes
-  static: at build time `SKIP_ENV_VALIDATION=1` (Docker) makes t3-env return
-  raw `process.env` without defaults.
+  so it is read at runtime (swappable per container). The Zod default applies
+  at runtime, where validation runs — do not turn these routes static: at
+  build time `SKIP_ENV_VALIDATION=1` (Docker) makes t3-env return raw
+  `process.env` without defaults.
 - `.env.local` is optional; `SKIP_ENV_VALIDATION=1` bypasses validation (used in Docker builds).
 
 ## Providers
 
 `AppProviders` at `src/app/providers/app-providers.tsx` wraps the app with:
-1. `ApiClientProvider`
-2. `QueryProvider`
+1. `QueryProvider`
 
 ## Build & deploy
 
 - React Compiler enabled (`reactCompiler: true`), `poweredByHeader: false`, `typedRoutes: true`
 - Docker: multi-stage `Dockerfile` (standalone output via `DOCKER_BUILD=1`);
   `.env*` files are dockerignored — pass env at runtime
-- Docker builds have no `API_URL`, so the ISR build snapshot of `/` contains no
-  prefetched data (prefetch errors are swallowed). Self-heals at runtime: the
-  client fetches on first visit, and the next background revalidation runs
-  with the container's env and restores SSR data
 - Node >= 24, pnpm 11
