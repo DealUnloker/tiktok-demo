@@ -54,18 +54,6 @@ export function PanelActions({ item }: { item: MediaItem }) {
 	const [liked, setLiked] = useState(false)
 	const likes = item.likes + (liked ? 1 : 0)
 
-	async function share() {
-		// Per-item link; becomes a real deep link once /[id] routing lands.
-		const url = new URL(window.location.href)
-		url.searchParams.set('item', String(item.index))
-		try {
-			await navigator.clipboard.writeText(url.toString())
-			toast('Ссылка скопирована')
-		} catch {
-			toast('Не удалось скопировать ссылку')
-		}
-	}
-
 	return (
 		<div className='pointer-events-auto flex flex-col items-center gap-3'>
 			<ActionButton
@@ -87,7 +75,10 @@ export function PanelActions({ item }: { item: MediaItem }) {
 			>
 				<MessageCircle className='size-6' />
 			</ActionButton>
-			<ActionButton label='Поделиться' onClick={share}>
+			<ActionButton
+				label='Поделиться'
+				onClick={() => toast('Шеринг появится позже')}
+			>
 				<Share2 className='size-6' />
 			</ActionButton>
 		</div>

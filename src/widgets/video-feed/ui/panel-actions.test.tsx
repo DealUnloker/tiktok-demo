@@ -1,10 +1,4 @@
-import {
-	cleanup,
-	fireEvent,
-	render,
-	screen,
-	waitFor,
-} from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MediaItem } from '@/entities/media-item/model/media-item.schema'
@@ -53,39 +47,11 @@ describe('PanelActions', () => {
 		expect(screen.getByRole('button', { name: 'Лайк' })).toBeInTheDocument()
 	})
 
-	it('share copies a per-item URL and fires a toast', async () => {
-		const writeText = vi.fn().mockResolvedValue(undefined)
-		Object.defineProperty(navigator, 'clipboard', {
-			configurable: true,
-			value: { writeText },
-		})
-
-		render(<PanelActions item={makeItem({ index: 7 })} />)
-		fireEvent.click(screen.getByRole('button', { name: 'Поделиться' }))
-
-		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1))
-		expect(writeText.mock.calls[0]?.[0]).toContain('item=7')
-		await waitFor(() =>
-			expect(toastMock).toHaveBeenCalledWith('Ссылка скопирована'),
-		)
-	})
-
-	it('share reports a failure toast when the clipboard write rejects', async () => {
-		Object.defineProperty(navigator, 'clipboard', {
-			configurable: true,
-			value: {
-				writeText: vi.fn().mockRejectedValue(new Error('denied')),
-			},
-		})
-
+	it('share fires the not-implemented toast', () => {
 		render(<PanelActions item={makeItem()} />)
 		fireEvent.click(screen.getByRole('button', { name: 'Поделиться' }))
 
-		await waitFor(() =>
-			expect(toastMock).toHaveBeenCalledWith(
-				'Не удалось скопировать ссылку',
-			),
-		)
+		expect(toastMock).toHaveBeenCalledWith('Шеринг появится позже')
 	})
 
 	it.each([
