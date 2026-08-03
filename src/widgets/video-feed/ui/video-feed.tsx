@@ -1,22 +1,15 @@
 'use client'
 
-import '@egjs/react-flicking/dist/flicking.css'
-
-import type {
-	ChangedEvent,
-	MoveEndEvent,
-	MoveStartEvent,
-} from '@egjs/react-flicking'
-import Flicking from '@egjs/react-flicking'
 import { useInfiniteQuery } from '@tanstack/react-query'
-import type { WheelEvent } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { feedInfiniteOptions } from '@/entities/media-item/api/feed.options'
 import { playerPool } from '@/features/media-playback/model/player-pool'
 import { Skeleton } from '@/shared/ui/skeleton'
+import { useFeedDrag } from '../lib/use-feed-drag'
 import { useFeedStore } from '../model/feed.store'
 import { preloadManager } from '../model/preload-manager'
+import { DebugMetrics } from './debug-metrics'
 import { FeedPanel } from './feed-panel'
 
 const SKELETON_KEYS = [
@@ -30,33 +23,33 @@ const SKELETON_KEYS = [
 // How many unrendered panels may remain before we prefetch the next page.
 const APPEND_THRESHOLD = 4
 
-// Minimum time between wheel-triggered panel changes, so a single physical
-// scroll gesture (many small wheel events) advances only one panel.
-const WHEEL_COOLDOWN_MS = 700
+// Panels rendered above/below the active one. Everything outside the window
+// is two spacer divs — uniform 100dvh panels virtualize with no measurement.
+const OVERSCAN = 3
 
+// The feed mechanism is NATIVE browser scrolling with CSS scroll-snap
+// (`snap-y snap-mandatory` + `snap-always`): trackpad/wheel inertia, touch
+// physics, and snapping are all handled by the platform — zero gesture code.
+// A JS engine (Flicking) was implemented first and dropped: it has no wheel
+// support of its own, and every bridge needed hand-rolled inertia heuristics
+// that misfired on macOS trackpads (see docs/PLAN.md for the full history).
 export function VideoFeed() {
 	const { data, isPending, fetchNextPage, hasNextPage, isFetchingNextPage } =
 		useInfiniteQuery(feedInfiniteOptions())
 
-	const [mounted, setMounted] = useState(false)
-	// True initially: there's no gesture in flight on mount, so the first
-	// neighbors should warm once the settle debounce fires.
+	const scrollerRef = useRef<HTMLDivElement>(null)
+	// True initially: no gesture is in flight on mount, so the first
+	// neighbors warm up as soon as the preload debounce fires.
 	const [settled, setSettled] = useState(true)
-	const flickingRef = useRef<Flicking>(null)
-	const lastWheelAt = useRef(0)
 	const activeIndex = useFeedStore((state) => state.activeIndex)
-
-	useEffect(() => {
-		setMounted(true)
-	}, [])
 
 	useEffect(() => {
 		return () => {
 			playerPool.destroy()
 			preloadManager.destroy()
 			// The store survives SPA navigation; without a reset a remounted
-			// feed starts Flicking at panel 0 while activeIndex still points
-			// at the old position — nothing plays until the first swipe.
+			// feed starts at scrollTop 0 while activeIndex still points at
+			// the old position — nothing plays until the first swipe.
 			useFeedStore.getState().setActiveIndex(0)
 		}
 	}, [])
@@ -67,12 +60,10 @@ export function VideoFeed() {
 	)
 
 	useEffect(() => {
-		if (!mounted) return
 		preloadManager.update({ activeIndex, items, settled })
-	}, [mounted, activeIndex, items, settled])
+	}, [activeIndex, items, settled])
 
 	useEffect(() => {
-		if (!mounted) return
 		if (
 			activeIndex >= items.length - APPEND_THRESHOLD &&
 			hasNextPage &&
@@ -81,7 +72,6 @@ export function VideoFeed() {
 			fetchNextPage()
 		}
 	}, [
-		mounted,
 		activeIndex,
 		items.length,
 		hasNextPage,
@@ -89,22 +79,78 @@ export function VideoFeed() {
 		fetchNextPage,
 	])
 
+	// Active index tracks the native scroll position; "settled" comes from
+	// the `scrollend` event with a debounce fallback for engines without it.
 	useEffect(() => {
-		if (!mounted) return
+		const el = scrollerRef.current
+		if (!el) return
 
+		let debounce: ReturnType<typeof setTimeout> | null = null
+		const onScroll = () => {
+			const panelHeight = el.clientHeight
+			if (panelHeight > 0) {
+				const index = Math.round(el.scrollTop / panelHeight)
+				const store = useFeedStore.getState()
+				if (index !== store.activeIndex) {
+					store.setActiveIndex(index)
+				}
+			}
+			setSettled(false)
+			if (debounce) clearTimeout(debounce)
+			debounce = setTimeout(() => setSettled(true), 150)
+		}
+		const onScrollEnd = () => {
+			if (debounce) clearTimeout(debounce)
+			setSettled(true)
+		}
+
+		el.addEventListener('scroll', onScroll, { passive: true })
+		el.addEventListener('scrollend', onScrollEnd)
+		return () => {
+			el.removeEventListener('scroll', onScroll)
+			el.removeEventListener('scrollend', onScrollEnd)
+			if (debounce) clearTimeout(debounce)
+		}
+	}, [])
+
+	useFeedDrag(scrollerRef)
+
+	// Keyboard: smooth-scroll one panel; the browser snaps onto it.
+	useEffect(() => {
 		function onKeyDown(e: KeyboardEvent) {
+			// Keyboard focus inside the volume zone: arrows belong to the
+			// slider (Base UI handles them), not to feed navigation.
+			if (
+				e.target instanceof Element &&
+				e.target.closest('[data-volume-zone]')
+			) {
+				return
+			}
+			const el = scrollerRef.current
+			if (!el) return
 			if (e.key === 'ArrowDown' || e.key === 'PageDown') {
 				e.preventDefault()
-				flickingRef.current?.next().catch(() => {})
+				el.scrollBy({ top: el.clientHeight, behavior: 'smooth' })
 			} else if (e.key === 'ArrowUp' || e.key === 'PageUp') {
 				e.preventDefault()
-				flickingRef.current?.prev().catch(() => {})
+				el.scrollBy({ top: -el.clientHeight, behavior: 'smooth' })
+			} else if (e.key === ' ') {
+				// The video-player standard: Space toggles pause. Skip when
+				// focus sits on a real control (it would click it instead).
+				if (
+					e.target instanceof Element &&
+					e.target.closest('button:not([data-tap-layer]), a, input')
+				) {
+					return
+				}
+				e.preventDefault()
+				playerPool.togglePlayPause()
 			}
 		}
 
 		window.addEventListener('keydown', onKeyDown)
 		return () => window.removeEventListener('keydown', onKeyDown)
-	}, [mounted])
+	}, [])
 
 	if (isPending) {
 		return (
@@ -116,60 +162,45 @@ export function VideoFeed() {
 		)
 	}
 
-	if (!mounted) {
-		// Flicking measures the viewport on mount and briefly renders in the wrong
-		// orientation right after hydration (naver/egjs-flicking#615). Render only
-		// the static first panel until the effect flips `mounted` — SSR HTML shows
-		// the poster, no Flicking markup at all.
-		const firstItem = items[0]
-		return firstItem ? (
-			<FeedPanel item={firstItem} isActive={false} />
-		) : null
-	}
-
-	function onWheel(e: WheelEvent) {
-		const now = Date.now()
-		if (now - lastWheelAt.current < WHEEL_COOLDOWN_MS) return
-		lastWheelAt.current = now
-
-		if (e.deltaY > 0) {
-			flickingRef.current?.next().catch(() => {})
-		} else if (e.deltaY < 0) {
-			flickingRef.current?.prev().catch(() => {})
-		}
-	}
+	const renderStart = Math.max(0, activeIndex - OVERSCAN)
+	const renderEnd = Math.min(items.length, activeIndex + OVERSCAN + 1)
+	const windowItems = items.slice(renderStart, renderEnd)
+	const trailingCount = items.length - renderEnd
 
 	return (
 		<div
-			className='h-dvh w-full overflow-hidden overscroll-contain'
-			onWheel={onWheel}
+			ref={scrollerRef}
+			className='h-dvh w-full touch-pan-y snap-y snap-mandatory select-none overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'
+			data-testid='feed-scroller'
 		>
-			<Flicking
-				ref={flickingRef}
-				className='h-full w-full'
-				horizontal={false}
-				panelsPerView={1}
-				moveType={['strict', { count: 1 }]}
-				renderOnlyVisible={true}
-				onChanged={(e: ChangedEvent) => {
-					useFeedStore.getState().setActiveIndex(e.index)
-				}}
-				onMoveStart={(_e: MoveStartEvent) => {
-					setSettled(false)
-				}}
-				onMoveEnd={(_e: MoveEndEvent) => {
-					setSettled(true)
-				}}
-			>
-				{items.map((item, index) => (
-					<FeedPanel
+			<DebugMetrics />
+			{renderStart > 0 ? (
+				<div
+					aria-hidden
+					style={{ height: `${renderStart * 100}dvh` }}
+				/>
+			) : null}
+			{windowItems.map((item, i) => {
+				const index = renderStart + i
+				return (
+					<div
 						key={item.id}
-						item={item}
-						isActive={index === activeIndex}
-						isNeighbor={Math.abs(index - activeIndex) === 1}
-					/>
-				))}
-			</Flicking>
+						className='h-dvh w-full snap-start snap-always'
+					>
+						<FeedPanel
+							item={item}
+							isActive={index === activeIndex}
+							isNeighbor={Math.abs(index - activeIndex) === 1}
+						/>
+					</div>
+				)
+			})}
+			{trailingCount > 0 ? (
+				<div
+					aria-hidden
+					style={{ height: `${trailingCount * 100}dvh` }}
+				/>
+			) : null}
 		</div>
 	)
 }

@@ -233,6 +233,11 @@ describe('PlayerPool', () => {
 			expect(slot.element.muted).toBe(true)
 		}
 
+		pool.setVolume(0.25)
+		for (const slot of slots) {
+			expect(slot.element.volume).toBe(0.25)
+		}
+
 		pool.destroy()
 	})
 
@@ -504,6 +509,37 @@ describe('PlayerPool', () => {
 
 		container.querySelector('video')?.dispatchEvent(new Event('loadeddata'))
 		expect(onStatus).toHaveBeenLastCalledWith('ready')
+
+		pool.destroy()
+	})
+
+	it('togglePlayPause pauses a playing element and resumes a paused one', async () => {
+		const { PlayerPool } = await import('./player-pool')
+		const pool = new PlayerPool()
+		const container = document.createElement('div')
+		const play = HTMLMediaElement.prototype.play as ReturnType<typeof vi.fn>
+		const pause = HTMLMediaElement.prototype.pause as ReturnType<
+			typeof vi.fn
+		>
+
+		pool.claim(0, '0.m3u8', container, { onStatus: vi.fn() })
+		await flush()
+
+		const video = container.querySelector('video')
+		if (!video) throw new Error('video missing')
+
+		// jsdom reports paused=true by default → toggle resumes.
+		const playCallsBefore = play.mock.calls.length
+		pool.togglePlayPause()
+		expect(play.mock.calls.length).toBe(playCallsBefore + 1)
+
+		// Simulate a playing element → toggle pauses and records the intent.
+		Object.defineProperty(video, 'paused', {
+			configurable: true,
+			value: false,
+		})
+		pool.togglePlayPause()
+		expect(pause).toHaveBeenCalled()
 
 		pool.destroy()
 	})

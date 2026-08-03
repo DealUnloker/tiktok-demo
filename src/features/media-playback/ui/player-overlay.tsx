@@ -1,8 +1,8 @@
 'use client'
 
-import { Play, Volume2, VolumeX } from 'lucide-react'
-import { usePlaybackStore } from '@/features/media-playback/model/playback.store'
+import { Play } from 'lucide-react'
 import type { PlayerStatus } from '@/features/media-playback/model/player-pool'
+import { VolumeControl } from '@/features/media-playback/ui/volume-control'
 import { Button } from '@/shared/ui/button'
 
 type PlayerOverlayProps = {
@@ -11,20 +11,21 @@ type PlayerOverlayProps = {
 }
 
 export function PlayerOverlay({ status, onRetry }: PlayerOverlayProps) {
-	const muted = usePlaybackStore((state) => state.muted)
-	const toggleMute = usePlaybackStore((state) => state.toggleMute)
-
 	return (
 		<div className='pointer-events-none absolute inset-0'>
-			<Button
-				variant='ghost'
-				size='icon'
-				className='pointer-events-auto absolute top-4 right-4 rounded-full bg-black/30 text-white backdrop-blur hover:bg-black/40 hover:text-white'
-				onClick={toggleMute}
-				aria-label={muted ? 'Включить звук' : 'Выключить звук'}
-			>
-				{muted ? <VolumeX /> : <Volume2 />}
-			</Button>
+			<div className='absolute top-4 right-4'>
+				<VolumeControl />
+			</div>
+
+			{status === 'paused' ? (
+				// Indicator only — the panel's tap layer underneath resumes.
+				<div className='absolute inset-0 flex items-center justify-center'>
+					<Play
+						className='size-16 text-white/85 drop-shadow-lg'
+						fill='currentColor'
+					/>
+				</div>
+			) : null}
 
 			{status === 'blocked' ? (
 				<button

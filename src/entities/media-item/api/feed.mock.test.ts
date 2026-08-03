@@ -31,4 +31,21 @@ describe('getFeedPage', () => {
 		const page = await getFeedPage(0, 10)
 		expect(() => feedPageSchema.parse(page)).not.toThrow()
 	})
+
+	it('serves 100+ unique virtual clips (stream + start position)', async () => {
+		const pages = await Promise.all([
+			getFeedPage(0, 20),
+			getFeedPage(20, 20),
+			getFeedPage(40, 20),
+			getFeedPage(60, 20),
+			getFeedPage(80, 20),
+			getFeedPage(100, 20),
+		])
+		const clips = new Set(
+			pages
+				.flatMap((page) => page.items)
+				.map((item) => `${item.hlsUrl}#${item.startSec}`),
+		)
+		expect(clips.size).toBeGreaterThanOrEqual(100)
+	})
 })

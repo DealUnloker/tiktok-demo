@@ -28,6 +28,35 @@ const STREAM_POOL = [
 	},
 ] as const
 
+// Public CORS-enabled HLS test streams are scarce (a dozen exist, not 100+),
+// so unique feed items are VIRTUAL CLIPS: the same streams cut by start
+// position every CLIP_STEP_SEC. ~2300s of source footage → 100+ clips with
+// distinct scenes. The player seeks to `startSec` (hls.js `startPosition`).
+const CLIP_STEP_SEC = 20
+// Don't start a clip closer than this to the end of the stream.
+const CLIP_MIN_TAIL_SEC = 15
+
+const VIRTUAL_CLIPS = STREAM_POOL.flatMap((stream) => {
+	const clips: { hlsUrl: string; startSec: number; durationSec: number }[] =
+		[]
+	for (
+		let start = 0;
+		start + CLIP_MIN_TAIL_SEC <= stream.durationSec;
+		start += CLIP_STEP_SEC
+	) {
+		clips.push({
+			hlsUrl: stream.hlsUrl,
+			startSec: start,
+			durationSec: Math.min(CLIP_STEP_SEC, stream.durationSec - start),
+		})
+	}
+	return clips
+})
+
+// Coprime stride scatters consecutive feed items across different streams and
+// far-apart scenes, instead of walking one movie 20s at a time.
+const CLIP_STRIDE = 7919
+
 const AUTHOR_NAMES = [
 	'Алиса Соколова',
 	'Иван Петров',
@@ -50,7 +79,7 @@ function hashLikes(index: number) {
 }
 
 function buildMediaItem(index: number): MediaItem {
-	const stream = STREAM_POOL[index % STREAM_POOL.length]
+	const clip = VIRTUAL_CLIPS[(index * CLIP_STRIDE) % VIRTUAL_CLIPS.length]
 	const authorName = AUTHOR_NAMES[index % AUTHOR_NAMES.length]
 	const description = DESCRIPTION_PHRASES[index % DESCRIPTION_PHRASES.length]
 
@@ -59,9 +88,10 @@ function buildMediaItem(index: number): MediaItem {
 		index,
 		title: `Видео #${index + 1}`,
 		description,
-		hlsUrl: stream.hlsUrl,
+		hlsUrl: clip.hlsUrl,
+		startSec: clip.startSec,
 		posterUrl: null,
-		durationSec: stream.durationSec,
+		durationSec: clip.durationSec,
 		author: {
 			name: authorName,
 			avatarUrl: null,

@@ -1,5 +1,5 @@
 import type { RefObject } from 'react'
-import { useEffect, useLayoutEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { PlayerStatus, PoolEntry } from '../model/player-pool'
 import { playerPool } from '../model/player-pool'
 
@@ -20,6 +20,9 @@ export function usePanelPlayer(
 ) {
 	const [status, setStatus] = useState<PlayerStatus>('loading')
 	const [retryCount, setRetryCount] = useState(0)
+	// Set by retry() so the next claim counts as a user gesture — this is
+	// what lets prefers-reduced-motion users start playback with a tap.
+	const userInitiatedRef = useRef(false)
 
 	// retryCount isn't read in the body — it's a dependency purely to force
 	// this effect (and thus a fresh claim) to re-run on retry().
@@ -37,8 +40,13 @@ export function usePanelPlayer(
 			entry.src,
 			el,
 			{ onStatus: setStatus },
-			{ play },
+			{
+				play,
+				userInitiated: userInitiatedRef.current,
+				startSec: entry.startSec,
+			},
 		)
+		userInitiatedRef.current = false
 
 		return () => {
 			release()
@@ -46,6 +54,7 @@ export function usePanelPlayer(
 	}, [entry, play, slotRef, retryCount])
 
 	function retry() {
+		userInitiatedRef.current = true
 		setRetryCount((count) => count + 1)
 	}
 

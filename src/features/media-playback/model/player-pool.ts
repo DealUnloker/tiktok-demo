@@ -1,4 +1,5 @@
 import type Hls from 'hls.js'
+import { useMetricsStore } from './metrics.store'
 import { usePlaybackStore } from './playback.store'
 
 // Shared across every slot: multiple panels can attach around the same
@@ -16,11 +17,20 @@ function isNotAllowedError(error: unknown) {
 	return error instanceof DOMException && error.name === 'NotAllowedError'
 }
 
-export type PlayerStatus = 'loading' | 'ready' | 'playing' | 'blocked' | 'error'
+export type PlayerStatus =
+	| 'loading'
+	| 'ready'
+	| 'playing'
+	| 'paused'
+	| 'blocked'
+	| 'error'
 
 export type PoolEntry = {
 	index: number
 	src: string
+	// Virtual-clip start inside the stream (feed items are cut from long
+	// public streams by start position).
+	startSec?: number
 }
 
 type SlotRole = 'active' | 'warm'
@@ -57,6 +67,9 @@ const ROLE_CONFIG: Record<
 type ActiveClaim = {
 	slot: Slot
 	onStatus: (status: PlayerStatus) => void
+	// Set when the user explicitly paused via togglePlayPause — a tab-return
+	// resume must not override an intentional pause.
+	userPaused: boolean
 }
 
 export class PlayerPool {
@@ -75,6 +88,7 @@ export class PlayerPool {
 
 		this.unsubscribeStore = usePlaybackStore.subscribe((state) => {
 			this.setMuted(state.muted)
+			this.setVolume(state.volume)
 		})
 
 		this.onVisibilityChange = () => {
@@ -82,7 +96,7 @@ export class PlayerPool {
 			if (!claim) return
 			if (document.hidden) {
 				claim.slot.element.pause()
-			} else {
+			} else if (!claim.userPaused) {
 				claim.slot.element.play().catch((error: unknown) => {
 					if (isNotAllowedError(error)) {
 						claim.onStatus('blocked')
@@ -96,9 +110,12 @@ export class PlayerPool {
 	private createSlot(): Slot {
 		const element = document.createElement('video')
 		element.muted = usePlaybackStore.getState().muted
+		element.volume = usePlaybackStore.getState().volume
 		element.playsInline = true
 		element.loop = true
-		element.className = 'absolute inset-0 h-full w-full object-cover'
+		// object-contain: the whole frame must stay visible (letterboxed on
+		// mismatched aspect ratios), not zoom-cropped to fill.
+		element.className = 'absolute inset-0 h-full w-full object-contain'
 		return {
 			element,
 			hls: null,
@@ -126,7 +143,7 @@ export class PlayerPool {
 		slot.attachPromise = null
 	}
 
-	private attach(slot: Slot, src: string, role: SlotRole) {
+	private attach(slot: Slot, src: string, role: SlotRole, startSec = 0) {
 		slot.generation += 1
 		const generation = slot.generation
 		slot.role = role
@@ -138,7 +155,11 @@ export class PlayerPool {
 				// The slot's role may have changed while the import was in
 				// flight (warm neighbor promoted to active) — read it now,
 				// not from the captured argument.
-				const hls = new HlsCtor({ ...ROLE_CONFIG[slot.role] })
+				const hls = new HlsCtor({
+					...ROLE_CONFIG[slot.role],
+					// Virtual clip: buffer straight from the clip's start.
+					startPosition: startSec > 0 ? startSec : -1,
+				})
 				slot.hls = hls
 				slot.nativeSrc = false
 				hls.autoLevelCapping = this.autoLevelCap
@@ -180,6 +201,17 @@ export class PlayerPool {
 			) {
 				slot.element.src = src
 				slot.nativeSrc = true
+				if (startSec > 0) {
+					slot.element.addEventListener(
+						'loadedmetadata',
+						() => {
+							if (generation === slot.generation) {
+								slot.element.currentTime = startSec
+							}
+						},
+						{ once: true },
+					)
+				}
 			}
 		})
 	}
@@ -236,6 +268,7 @@ export class PlayerPool {
 		role: SlotRole,
 		exceptIndexes: Set<number>,
 		restrictFreeToIndexes?: Set<number>,
+		startSec = 0,
 	): Slot {
 		const existing = this.findSlotByIndex(index)
 		if (existing) {
@@ -249,7 +282,7 @@ export class PlayerPool {
 			const slot = this.createSlot()
 			this.slots.push(slot)
 			slot.index = index
-			this.attach(slot, src, role)
+			this.attach(slot, src, role, startSec)
 			return slot
 		}
 
@@ -265,7 +298,7 @@ export class PlayerPool {
 		if (toFree) {
 			this.freeSlot(toFree)
 			toFree.index = index
-			this.attach(toFree, src, role)
+			this.attach(toFree, src, role, startSec)
 			return toFree
 		}
 
@@ -280,7 +313,7 @@ export class PlayerPool {
 		}, this.slots[0])
 		this.freeSlot(fallback)
 		fallback.index = index
-		this.attach(fallback, src, role)
+		this.attach(fallback, src, role, startSec)
 		return fallback
 	}
 
@@ -302,6 +335,8 @@ export class PlayerPool {
 			entries.active.src,
 			'active',
 			wantedIndexes,
+			undefined,
+			entries.active.startSec ?? 0,
 		)
 
 		for (const entry of entries.warm) {
@@ -310,6 +345,8 @@ export class PlayerPool {
 				entry.src,
 				'warm',
 				wantedIndexes,
+				undefined,
+				entry.startSec ?? 0,
 			)
 		}
 
@@ -346,6 +383,7 @@ export class PlayerPool {
 			previousActiveIndex !== null
 				? new Set([previousActiveIndex])
 				: undefined,
+			entry.startSec ?? 0,
 		)
 
 		for (const slot of this.slots) {
@@ -379,7 +417,11 @@ export class PlayerPool {
 		src: string,
 		container: HTMLElement,
 		callbacks: { onStatus: (status: PlayerStatus) => void },
-		options: { play?: boolean } = {},
+		options: {
+			play?: boolean
+			userInitiated?: boolean
+			startSec?: number
+		} = {},
 	): () => void {
 		this.ensureInit()
 		const shouldPlay = options.play !== false
@@ -389,6 +431,8 @@ export class PlayerPool {
 			src,
 			shouldPlay ? 'active' : 'warm',
 			new Set([index]),
+			undefined,
+			options.startSec ?? 0,
 		)
 		if (shouldPlay) {
 			this.activeIndex = index
@@ -405,26 +449,78 @@ export class PlayerPool {
 		// poster can drop immediately instead of waiting for events.
 		callbacks.onStatus(slot.element.readyState >= 2 ? 'ready' : 'loading')
 
-		const onWaiting = () => callbacks.onStatus('loading')
+		// Debug-overlay metrics for the ACTIVE claim: TTFF (claim → first
+		// 'playing'), rebuffer time ('waiting' → 'playing'), dropped frames.
+		const claimedAt = performance.now()
+		let firstPlayingSeen = false
+		let rebufferStartedAt: number | null = null
+
+		const onWaiting = () => {
+			if (shouldPlay && firstPlayingSeen && rebufferStartedAt === null) {
+				rebufferStartedAt = performance.now()
+			}
+			callbacks.onStatus('loading')
+		}
 		const onLoadedData = () => callbacks.onStatus('ready')
-		const onPlaying = () => callbacks.onStatus('playing')
+		const onPlaying = () => {
+			if (shouldPlay) {
+				const metrics = useMetricsStore.getState()
+				if (!firstPlayingSeen) {
+					firstPlayingSeen = true
+					metrics.reportTtff(performance.now() - claimedAt)
+				} else if (rebufferStartedAt !== null) {
+					metrics.reportRebuffer(
+						performance.now() - rebufferStartedAt,
+					)
+				}
+				rebufferStartedAt = null
+				metrics.reportDroppedFrames(
+					slot.element.getVideoPlaybackQuality?.()
+						?.droppedVideoFrames ?? 0,
+				)
+			}
+			callbacks.onStatus('playing')
+		}
+		const onPause = () => callbacks.onStatus('paused')
 		const onError = () => callbacks.onStatus('error')
 		slot.element.addEventListener('waiting', onWaiting)
 		slot.element.addEventListener('stalled', onWaiting)
 		slot.element.addEventListener('loadeddata', onLoadedData)
 		slot.element.addEventListener('playing', onPlaying)
+		if (shouldPlay) {
+			// Only the active claim reports 'paused' — a neighbor's element is
+			// paused by design, its panel must keep showing the plain frame.
+			slot.element.addEventListener('pause', onPause)
+		}
 		slot.element.addEventListener('error', onError)
 
 		if (shouldPlay) {
-			this.activeClaim = { slot, onStatus: callbacks.onStatus }
+			this.activeClaim = {
+				slot,
+				onStatus: callbacks.onStatus,
+				userPaused: false,
+			}
 		}
 
 		let released = false
 		const claimGeneration = slot.generation
 
 		slot.element.muted = usePlaybackStore.getState().muted
+		slot.element.volume = usePlaybackStore.getState().volume
 
-		if (shouldPlay) {
+		// prefers-reduced-motion: no AUTOplay — the user starts playback with
+		// an explicit tap (options.userInitiated, set by the retry path).
+		const autoplayAllowed =
+			options.userInitiated ||
+			typeof window === 'undefined' ||
+			typeof window.matchMedia !== 'function' ||
+			!window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+		if (shouldPlay && !autoplayAllowed) {
+			callbacks.onStatus('blocked')
+		}
+
+		if (shouldPlay && autoplayAllowed) {
 			const attemptPlay = () => {
 				slot.element.play().catch((error: unknown) => {
 					if (released || slot.generation !== claimGeneration) return
@@ -461,6 +557,7 @@ export class PlayerPool {
 			slot.element.removeEventListener('stalled', onWaiting)
 			slot.element.removeEventListener('loadeddata', onLoadedData)
 			slot.element.removeEventListener('playing', onPlaying)
+			slot.element.removeEventListener('pause', onPause)
 			slot.element.removeEventListener('error', onError)
 			const wasActiveClaim = this.activeClaim?.slot === slot
 			if (wasActiveClaim) {
@@ -478,9 +575,34 @@ export class PlayerPool {
 		}
 	}
 
+	// Tap-to-pause on the active panel. Resuming counts as a user gesture, so
+	// autoplay-policy rejections here only surface as 'blocked'.
+	togglePlayPause(): void {
+		const claim = this.activeClaim
+		if (!claim) return
+		const element = claim.slot.element
+		if (element.paused) {
+			claim.userPaused = false
+			element.play().catch((error: unknown) => {
+				if (isNotAllowedError(error)) {
+					claim.onStatus('blocked')
+				}
+			})
+		} else {
+			claim.userPaused = true
+			element.pause()
+		}
+	}
+
 	setMuted(muted: boolean): void {
 		for (const slot of this.slots) {
 			slot.element.muted = muted
+		}
+	}
+
+	setVolume(volume: number): void {
+		for (const slot of this.slots) {
+			slot.element.volume = volume
 		}
 	}
 

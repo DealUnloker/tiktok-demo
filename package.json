@@ -20,9 +20,9 @@
 	},
 	"dependencies": {
 		"@base-ui/react": "^1.6.0",
-		"@egjs/react-flicking": "^4.16.6",
 		"@t3-oss/env-nextjs": "^0.13.11",
 		"@tanstack/react-query": "^5.101.4",
+		"@use-gesture/react": "^10.3.1",
 		"class-variance-authority": "^0.7.1",
 		"clsx": "^2.1.1",
 		"hls.js": "^1.6.16",

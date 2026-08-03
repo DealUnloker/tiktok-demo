@@ -3,9 +3,10 @@ import { playerPool } from '@/features/media-playback/model/player-pool'
 export type FeedItemLike = {
 	index: number
 	hlsUrl: string
+	startSec?: number
 }
 
-type PreloadEntry = { index: number; src: string }
+type PreloadEntry = { index: number; src: string; startSec?: number }
 
 // Local shape aligned with PlayerPool's public API — kept separate so tests
 // can pass a plain mock object without importing the real pool.
@@ -59,7 +60,11 @@ export class PreloadManager {
 		const active = items[activeIndex]
 		if (!active) return
 
-		this.pool.ensureActive({ index: active.index, src: active.hlsUrl })
+		this.pool.ensureActive({
+			index: active.index,
+			src: active.hlsUrl,
+			startSec: active.startSec,
+		})
 
 		if (this.settleTimer !== null) {
 			clearTimeout(this.settleTimer)
@@ -100,10 +105,15 @@ export class PreloadManager {
 						.map((item) => ({
 							index: item.index,
 							src: item.hlsUrl,
+							startSec: item.startSec,
 						}))
 
 		this.pool.applyWindow({
-			active: { index: active.index, src: active.hlsUrl },
+			active: {
+				index: active.index,
+				src: active.hlsUrl,
+				startSec: active.startSec,
+			},
 			warm,
 		})
 
