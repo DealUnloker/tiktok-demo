@@ -103,6 +103,9 @@ function buildMediaItem(index: number): MediaItem {
 export async function getFeedPage(
 	cursor = 0,
 	limit = 10,
+	// Latency imitation makes loading states visible in the browser, but has
+	// no business delaying the SSR prefetch of the first page.
+	options: { simulateLatency?: boolean } = {},
 ): Promise<FeedPageData> {
 	const safeCursor = Math.max(0, cursor)
 	const safeLimit = Math.max(0, limit)
@@ -113,7 +116,9 @@ export async function getFeedPage(
 		items.push(buildMediaItem(index))
 	}
 
-	await new Promise((resolve) => setTimeout(resolve, 150))
+	if (options.simulateLatency !== false) {
+		await new Promise((resolve) => setTimeout(resolve, 150))
+	}
 
 	return {
 		items,

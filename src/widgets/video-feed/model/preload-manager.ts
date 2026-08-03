@@ -1,3 +1,7 @@
+import type {
+	PlayerPool,
+	PoolEntry,
+} from '@/features/media-playback/model/player-pool'
 import { playerPool } from '@/features/media-playback/model/player-pool'
 
 export type FeedItemLike = {
@@ -6,14 +10,15 @@ export type FeedItemLike = {
 	startSec?: number
 }
 
-type PreloadEntry = { index: number; src: string; startSec?: number }
+// The exact slice of the pool this manager drives — derived from the real
+// class so the two can't drift; tests still pass a plain mock object.
+export type PreloadTarget = Pick<
+	PlayerPool,
+	'ensureActive' | 'applyWindow' | 'setAutoLevelCap'
+>
 
-// Local shape aligned with PlayerPool's public API — kept separate so tests
-// can pass a plain mock object without importing the real pool.
-export type PreloadTarget = {
-	ensureActive(entry: PreloadEntry): void
-	applyWindow(input: { active: PreloadEntry; warm: PreloadEntry[] }): void
-	setAutoLevelCap(cap: number): void
+function toPoolEntry(item: FeedItemLike): PoolEntry {
+	return { index: item.index, src: item.hlsUrl, startSec: item.startSec }
 }
 
 // hls.js's Network Information consultation is Chromium-only and untyped in
@@ -60,11 +65,7 @@ export class PreloadManager {
 		const active = items[activeIndex]
 		if (!active) return
 
-		this.pool.ensureActive({
-			index: active.index,
-			src: active.hlsUrl,
-			startSec: active.startSec,
-		})
+		this.pool.ensureActive(toPoolEntry(active))
 
 		if (this.settleTimer !== null) {
 			clearTimeout(this.settleTimer)
@@ -96,26 +97,15 @@ export class PreloadManager {
 		const budget = getNetworkBudget()
 		this.pool.setAutoLevelCap(budget === 'data-saver' ? 0 : -1)
 
-		const warm: PreloadEntry[] =
+		const warm: PoolEntry[] =
 			budget === 'data-saver'
 				? []
 				: [activeIndex + 1, activeIndex - 1]
 						.map((index) => items[index])
 						.filter((item): item is FeedItemLike => Boolean(item))
-						.map((item) => ({
-							index: item.index,
-							src: item.hlsUrl,
-							startSec: item.startSec,
-						}))
+						.map(toPoolEntry)
 
-		this.pool.applyWindow({
-			active: {
-				index: active.index,
-				src: active.hlsUrl,
-				startSec: active.startSec,
-			},
-			warm,
-		})
+		this.pool.applyWindow({ active: toPoolEntry(active), warm })
 
 		if (budget !== 'normal') return
 

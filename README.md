@@ -1,83 +1,72 @@
-# Frontend Template
+# Вертикальная видео-лента
 
-Next.js 16 (App Router) starter with Feature-Sliced Design and strict tooling
-out of the box.
+Тестовое задание: mobile-first лента коротких видео в духе TikTok / Reels /
+Shorts — скролл по одному ролику, автовоспроизведение активного, предзагрузка
+соседних, виртуализация на любую длину ленты.
 
-## Stack
+- **Демо:** [tiktok.dealunloker.com](https://tiktok.dealunloker.com) — лента на
+  главной странице; [`?debug=1`](https://tiktok.dealunloker.com/?debug=1)
+  показывает метрики воспроизведения (TTFF, ребуферизация, dropped frames).
+- **Технический план и обоснование решений:** [docs/PLAN.md](./docs/PLAN.md).
 
-- **Next.js 16** — App Router, React 19, React Compiler enabled
-- **Feature-Sliced Design** — validated with [steiger](https://github.com/feature-sliced/steiger)
-- **TanStack React Query v5** — client + SSR-ready `QueryClient` factory wired up
-- **Tailwind CSS v4** + **shadcn** (base-nova, Base UI primitives)
-- **Biome** — lint + format (tabs, single quotes, no semicolons)
-- **Lefthook** — pre-commit lint, pre-push type-check + FSD validation
-- **Vitest** + **Testing Library** — colocated component tests
-- **Playwright** — e2e tests in `e2e/`
-- **GitHub Actions** — lint, type-check, FSD, tests, build on push/PR
-- **t3-env** — validated environment variables
+## Стек
 
-## Getting started
+Next.js 16 (App Router, React 19 + Compiler), TypeScript, hls.js,
+TanStack Query v5, Zustand v5, Tailwind CSS v4 + shadcn, Feature-Sliced Design
+(steiger), Biome, Vitest + Playwright.
+
+## Где что лежит
+
+Проект организован по FSD; импорты между слоями идут строго вниз
+(pages → widgets → features → entities → shared). Интересные места:
+
+```
+app/api/feed/route.ts        — тестовый эндпоинт ленты (cursor-пагинация, zod)
+src/pages/feed/              — композиция страницы: SSR-префетч первой страницы
+                               (prefetchInfiniteQuery + HydrationBoundary)
+src/widgets/video-feed/      — скроллер на CSS scroll-snap, виртуализация
+                               (spacer-паттерн, окно ±3), preload-manager,
+                               drag-to-scroll мышью, debug-оверлей метрик
+src/features/media-playback/ — пул из 3 переиспользуемых <video> + hls.js,
+                               Zustand-сторы (playback, metrics), оверлей
+                               плеера, контрол громкости
+src/entities/media-item/     — zod-схема, мок-генератор ленты, query options
+src/shared/                  — ui (shadcn), React Query client, конфиг
+```
+
+Реального бэкенда нет: `app/api/feed` детерминированно генерирует элементы
+ленты из пула публичных CORS-доступных HLS-потоков
+(`src/entities/media-item/api/feed.mock.ts`).
+
+## Запуск
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-`.env.local` is optional (`cp .env.example .env.local` to customize `SITE_URL`).
-
-## Scripts
-
-| Command | Description |
+| Команда | Описание |
 | --- | --- |
-| `pnpm dev` | Dev server |
-| `pnpm build` | Production build |
-| `pnpm tsc` | Type-check |
-| `pnpm lint` | Biome check + auto-fix |
-| `pnpm lint:ci` | Biome check only (CI) |
-| `pnpm test` | Run Vitest tests |
-| `pnpm test:coverage` | Run Vitest tests with coverage report |
-| `pnpm test:e2e` | Run Playwright e2e tests |
-| `pnpm run fsd` | Validate FSD layer boundaries |
+| `pnpm dev` | Дев-сервер |
+| `pnpm build` | Продакшен-сборка |
+| `pnpm test` | Юнит-тесты (Vitest, jsdom) |
+| `pnpm test:e2e` | E2e-тесты (Playwright, сам собирает и запускает приложение) |
+| `pnpm lint` | Biome check + автофикс |
+| `pnpm tsc` | Проверка типов |
+| `pnpm run fsd` | Валидация границ FSD-слоёв (steiger) |
 
-## Project structure
+## Тесты
 
-```
-app/       — Next.js App Router routes (thin, import from src/pages)
-pages/     — required stub, see pages/README.md
-src/
-  app/     — providers
-  pages/   — page compositions (home)
-  shared/  — api (React Query client), config, lib, ui
-```
+- **Юнит (Vitest + Testing Library)** — колокированы со слайсами
+  (`src/**/*.test.ts`): пул плееров и его жизненный цикл
+  (`player-pool.test.ts`), стратегия предзагрузки
+  (`preload-manager.test.ts`), стор воспроизведения
+  (`playback.store.test.ts`), мок-генератор ленты (`feed.mock.test.ts`).
+- **E2e (Playwright)** — `e2e/feed.spec.ts`: ограниченный DOM при
+  виртуализации, пошаговая навигация по ленте, бесшовная подгрузка следующей
+  страницы.
 
-Add `entities/`, `features/`, and `widgets/` layers under `src/` as the app
-grows — layer boundaries are enforced by steiger.
+## Требования
 
-## E2E tests
-
-Playwright specs live in `e2e/`. The web server config builds and starts the
-app itself (`pnpm build-start`); locally it reuses a server already running on
-:3000, and in CI it runs `pnpm start` against the build produced earlier in the
-pipeline.
-
-## Docker
-
-```bash
-docker build -t frontend-template .
-docker run -p 3000:3000 frontend-template
-```
-
-Or with Compose (reads env from `.env.local`):
-
-```bash
-docker compose up --build
-```
-
-## Requirements
-
-- Node >= 24 (`.nvmrc`)
-- pnpm 11
-
-## License
-
-[MIT](./LICENSE)
+Node >= 24, pnpm 11. `.env.local` опционален
+(`cp .env.example .env.local` — настроить `SITE_URL`).

@@ -44,28 +44,7 @@ vi.mock('hls.js', () => ({
 	default: MockHls,
 }))
 
-// This sandbox's node/jsdom combo exposes a `localStorage` global without a
-// working backing store (`setItem` throws), which breaks zustand's persist
-// middleware. Stub it with an in-memory Map so persistence logic still runs.
-function installMemoryLocalStorage() {
-	const store = new Map<string, string>()
-	Object.defineProperty(window, 'localStorage', {
-		configurable: true,
-		value: {
-			getItem: (key: string) => store.get(key) ?? null,
-			setItem: (key: string, value: string) => {
-				store.set(key, value)
-			},
-			removeItem: (key: string) => {
-				store.delete(key)
-			},
-			clear: () => store.clear(),
-		},
-	})
-}
-
 beforeEach(async () => {
-	installMemoryLocalStorage()
 	hlsInstances.length = 0
 	HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined)
 	HTMLMediaElement.prototype.pause = vi.fn()
@@ -90,6 +69,27 @@ async function flush() {
 	await new Promise((resolve) => setTimeout(resolve, 0))
 	await new Promise((resolve) => setTimeout(resolve, 0))
 	await Promise.resolve()
+}
+
+type TestSlot = {
+	element: HTMLVideoElement
+	index: number | null
+	hls: (typeof hlsInstances)[number] | null
+}
+
+function getSlots(pool: unknown): TestSlot[] {
+	// biome-ignore lint/suspicious/noExplicitAny: reaching into private slots for the test
+	return (pool as any).slots as TestSlot[]
+}
+
+type HlsErrorHandler = (event: string, data: Record<string, unknown>) => void
+
+function getErrorHandler(hls: (typeof hlsInstances)[number]): HlsErrorHandler {
+	const handler = hls.on.mock.calls.find(
+		([event]) => event === 'hlsError',
+	)?.[1]
+	if (!handler) throw new Error('hlsError handler not registered')
+	return handler as HlsErrorHandler
 }
 
 describe('PlayerPool', () => {
@@ -169,13 +169,9 @@ describe('PlayerPool', () => {
 		).length
 		expect(destroyedCount).toBeGreaterThan(0)
 
-		// biome-ignore lint/suspicious/noExplicitAny: reaching into private slots for the test
-		const slots = (pool as any).slots as Array<{
-			element: HTMLVideoElement
-		}>
 		// The pool caps at 3 slots (each backed by one real <video> element);
 		// far window shifts must reuse elements via LRU rather than growing.
-		expect(slots.length).toBeLessThanOrEqual(3)
+		expect(getSlots(pool).length).toBeLessThanOrEqual(3)
 
 		pool.destroy()
 	})
@@ -185,7 +181,7 @@ describe('PlayerPool', () => {
 		const pool = new PlayerPool()
 		const container = document.createElement('div')
 
-		const release = pool.claim(0, '0.m3u8', container, {
+		const release = pool.claim({ index: 0, src: '0.m3u8' }, container, {
 			onStatus: vi.fn(),
 		})
 		await flush()
@@ -202,7 +198,9 @@ describe('PlayerPool', () => {
 
 		// A claim from a DIFFERENT container moves the element there.
 		const otherContainer = document.createElement('div')
-		pool.claim(0, '0.m3u8', otherContainer, { onStatus: vi.fn() })
+		pool.claim({ index: 0, src: '0.m3u8' }, otherContainer, {
+			onStatus: vi.fn(),
+		})
 		expect(container.children.length).toBe(0)
 		expect(otherContainer.children.length).toBe(1)
 
@@ -220,10 +218,7 @@ describe('PlayerPool', () => {
 		await flush()
 
 		pool.setMuted(false)
-		// biome-ignore lint/suspicious/noExplicitAny: reaching into private slots for the test
-		const slots = (pool as any).slots as Array<{
-			element: HTMLVideoElement
-		}>
+		const slots = getSlots(pool)
 		for (const slot of slots) {
 			expect(slot.element.muted).toBe(false)
 		}
@@ -262,7 +257,9 @@ describe('PlayerPool', () => {
 			return Promise.resolve()
 		})
 
-		pool.claim(0, '0.m3u8', container, { onStatus: vi.fn() })
+		pool.claim({ index: 0, src: '0.m3u8' }, container, {
+			onStatus: vi.fn(),
+		})
 		await flush()
 		await flush()
 
@@ -279,7 +276,9 @@ describe('PlayerPool', () => {
 		const container = document.createElement('div')
 		const play = HTMLMediaElement.prototype.play as ReturnType<typeof vi.fn>
 
-		pool.claim(0, '0.m3u8', container, { onStatus: vi.fn() })
+		pool.claim({ index: 0, src: '0.m3u8' }, container, {
+			onStatus: vi.fn(),
+		})
 		// Cold claim: hls.js chunk not resolved yet — play must not fire on a
 		// source-less element (it would reject and read as "blocked").
 		expect(play).not.toHaveBeenCalled()
@@ -298,7 +297,7 @@ describe('PlayerPool', () => {
 			typeof vi.fn
 		>
 
-		const release = pool.claim(0, '0.m3u8', container, {
+		const release = pool.claim({ index: 0, src: '0.m3u8' }, container, {
 			onStatus: vi.fn(),
 		})
 		await flush()
@@ -322,7 +321,7 @@ describe('PlayerPool', () => {
 		const container = document.createElement('div')
 		const onStatus = vi.fn()
 
-		pool.claim(0, '0.m3u8', container, { onStatus })
+		pool.claim({ index: 0, src: '0.m3u8' }, container, { onStatus })
 		await flush()
 		await flush()
 
@@ -339,14 +338,12 @@ describe('PlayerPool', () => {
 		const container = document.createElement('div')
 		const onStatus = vi.fn()
 
-		pool.claim(0, '0.m3u8', container, { onStatus })
+		pool.claim({ index: 0, src: '0.m3u8' }, container, { onStatus })
 		await flush()
 
 		const hls = hlsInstances[0]
 		if (!hls) throw new Error('hls instance missing')
-		const errorHandler = hls.on.mock.calls.find(
-			([event]) => event === 'hlsError',
-		)?.[1] as (event: string, data: Record<string, unknown>) => void
+		const errorHandler = getErrorHandler(hls)
 		errorHandler('hlsError', { fatal: true, type: 'otherError' })
 
 		expect(hls.destroy).toHaveBeenCalled()
@@ -354,7 +351,9 @@ describe('PlayerPool', () => {
 
 		// Retry path: claiming the same index again must create a fresh
 		// attach instead of returning the dead slot.
-		pool.claim(0, '0.m3u8', container, { onStatus: vi.fn() })
+		pool.claim({ index: 0, src: '0.m3u8' }, container, {
+			onStatus: vi.fn(),
+		})
 		await flush()
 		expect(hlsInstances.length).toBeGreaterThanOrEqual(2)
 
@@ -367,14 +366,12 @@ describe('PlayerPool', () => {
 		const container = document.createElement('div')
 		const onStatus = vi.fn()
 
-		pool.claim(0, '0.m3u8', container, { onStatus })
+		pool.claim({ index: 0, src: '0.m3u8' }, container, { onStatus })
 		await flush()
 
 		const hls = hlsInstances[0]
 		if (!hls) throw new Error('hls instance missing')
-		const errorHandler = hls.on.mock.calls.find(
-			([event]) => event === 'hlsError',
-		)?.[1] as (event: string, data: Record<string, unknown>) => void
+		const errorHandler = getErrorHandler(hls)
 
 		errorHandler('hlsError', { fatal: true, type: 'networkError' })
 		expect(hls.startLoad).toHaveBeenCalled()
@@ -400,12 +397,7 @@ describe('PlayerPool', () => {
 		})
 		await flush()
 
-		// biome-ignore lint/suspicious/noExplicitAny: reaching into private slots for the test
-		const slotsBefore = (pool as any).slots as Array<{
-			index: number | null
-			hls: (typeof hlsInstances)[number] | null
-		}>
-		const warmHlsBefore = slotsBefore
+		const warmHlsBefore = getSlots(pool)
 			.filter((slot) => slot.index === 4 || slot.index === 6)
 			.map((slot) => slot.hls)
 
@@ -418,11 +410,7 @@ describe('PlayerPool', () => {
 			expect(hls?.destroy).not.toHaveBeenCalled()
 		}
 
-		// biome-ignore lint/suspicious/noExplicitAny: reaching into private slots for the test
-		const slotsAfter = (pool as any).slots as Array<{
-			index: number | null
-		}>
-		const indexesAfter = slotsAfter.map((slot) => slot.index)
+		const indexesAfter = getSlots(pool).map((slot) => slot.index)
 		expect(indexesAfter).toContain(4)
 		expect(indexesAfter).toContain(6)
 		expect(indexesAfter).toContain(10)
@@ -437,7 +425,9 @@ describe('PlayerPool', () => {
 		const pool = new PlayerPool()
 		const container = document.createElement('div')
 
-		pool.claim(0, '0.m3u8', container, { onStatus: vi.fn() })
+		pool.claim({ index: 0, src: '0.m3u8' }, container, {
+			onStatus: vi.fn(),
+		})
 		await flush()
 
 		pool.applyWindow({
@@ -446,13 +436,7 @@ describe('PlayerPool', () => {
 		})
 		await flush()
 
-		// biome-ignore lint/suspicious/noExplicitAny: reaching into private slots for the test
-		const slots = (pool as any).slots as Array<{
-			element: HTMLVideoElement
-			index: number | null
-			hls: (typeof hlsInstances)[number] | null
-		}>
-		const activeSlot = slots.find((slot) => slot.index === 0)
+		const activeSlot = getSlots(pool).find((slot) => slot.index === 0)
 		if (!activeSlot) throw new Error('active slot missing')
 
 		// Rebuffering of the active element must not pause warm loading —
@@ -500,7 +484,12 @@ describe('PlayerPool', () => {
 		const onStatus = vi.fn()
 		const play = HTMLMediaElement.prototype.play as ReturnType<typeof vi.fn>
 
-		pool.claim(1, '1.m3u8', container, { onStatus }, { play: false })
+		pool.claim(
+			{ index: 1, src: '1.m3u8' },
+			container,
+			{ onStatus },
+			{ play: false },
+		)
 		await flush()
 
 		expect(container.children.length).toBe(1)
@@ -522,7 +511,9 @@ describe('PlayerPool', () => {
 			typeof vi.fn
 		>
 
-		pool.claim(0, '0.m3u8', container, { onStatus: vi.fn() })
+		pool.claim({ index: 0, src: '0.m3u8' }, container, {
+			onStatus: vi.fn(),
+		})
 		await flush()
 
 		const video = container.querySelector('video')
@@ -540,6 +531,206 @@ describe('PlayerPool', () => {
 		})
 		pool.togglePlayPause()
 		expect(pause).toHaveBeenCalled()
+
+		pool.destroy()
+	})
+
+	it('fatal media error recovers once via recoverMediaError before tearing down', async () => {
+		const { PlayerPool } = await import('./player-pool')
+		const pool = new PlayerPool()
+		const container = document.createElement('div')
+		const onStatus = vi.fn()
+
+		pool.claim({ index: 0, src: '0.m3u8' }, container, { onStatus })
+		await flush()
+
+		const hls = hlsInstances[0]
+		if (!hls) throw new Error('hls instance missing')
+		const errorHandler = getErrorHandler(hls)
+
+		errorHandler('hlsError', { fatal: true, type: 'mediaError' })
+		expect(hls.recoverMediaError).toHaveBeenCalledTimes(1)
+		expect(hls.destroy).not.toHaveBeenCalled()
+
+		errorHandler('hlsError', { fatal: true, type: 'mediaError' })
+		expect(hls.destroy).toHaveBeenCalled()
+		expect(onStatus).toHaveBeenCalledWith('error')
+
+		pool.destroy()
+	})
+
+	it('claim reports ready immediately when the element already holds a decoded frame', async () => {
+		const { PlayerPool } = await import('./player-pool')
+		const pool = new PlayerPool()
+		const container = document.createElement('div')
+
+		pool.applyWindow({
+			active: { index: 0, src: '0.m3u8' },
+			warm: [],
+		})
+		await flush()
+
+		const slot = getSlots(pool).find((s) => s.index === 0)
+		if (!slot) throw new Error('slot missing')
+		// A warmed element with buffered data (HAVE_CURRENT_DATA or better).
+		Object.defineProperty(slot.element, 'readyState', {
+			configurable: true,
+			value: 2,
+		})
+
+		const onStatus = vi.fn()
+		pool.claim({ index: 0, src: '0.m3u8' }, container, { onStatus })
+
+		// The placeholder must drop immediately — first report is 'ready',
+		// never a transient 'loading'.
+		expect(onStatus).toHaveBeenNthCalledWith(1, 'ready')
+
+		pool.destroy()
+	})
+
+	it('startSec configures hls startPosition; without it startPosition stays -1', async () => {
+		const { PlayerPool } = await import('./player-pool')
+		const pool = new PlayerPool()
+
+		pool.applyWindow({
+			active: { index: 0, src: '0.m3u8', startSec: 42 },
+			warm: [{ index: 1, src: '1.m3u8' }],
+		})
+		await flush()
+
+		expect(hlsInstances[0]?.config.startPosition).toBe(42)
+		expect(hlsInstances[1]?.config.startPosition).toBe(-1)
+
+		pool.destroy()
+	})
+
+	it('tab return resumes a system-paused video but never a user-paused one', async () => {
+		const { PlayerPool } = await import('./player-pool')
+		const pool = new PlayerPool()
+		const container = document.createElement('div')
+		const play = HTMLMediaElement.prototype.play as ReturnType<typeof vi.fn>
+		const pause = HTMLMediaElement.prototype.pause as ReturnType<
+			typeof vi.fn
+		>
+
+		pool.claim({ index: 0, src: '0.m3u8' }, container, {
+			onStatus: vi.fn(),
+		})
+		await flush()
+
+		let hidden = false
+		Object.defineProperty(document, 'hidden', {
+			configurable: true,
+			get: () => hidden,
+		})
+
+		try {
+			// Tab goes hidden → the pool pauses the element (system pause).
+			hidden = true
+			const pauseCallsBefore = pause.mock.calls.length
+			document.dispatchEvent(new Event('visibilitychange'))
+			expect(pause.mock.calls.length).toBe(pauseCallsBefore + 1)
+
+			// Tab returns → a system-paused video auto-resumes.
+			hidden = false
+			const playCallsBefore = play.mock.calls.length
+			document.dispatchEvent(new Event('visibilitychange'))
+			expect(play.mock.calls.length).toBe(playCallsBefore + 1)
+
+			// User taps pause: togglePlayPause on a playing element records
+			// the intent.
+			const video = container.querySelector('video')
+			if (!video) throw new Error('video missing')
+			Object.defineProperty(video, 'paused', {
+				configurable: true,
+				value: false,
+			})
+			pool.togglePlayPause()
+
+			// Tab hides and returns → the intentional pause must survive.
+			hidden = true
+			document.dispatchEvent(new Event('visibilitychange'))
+			hidden = false
+			const playCallsAfterUserPause = play.mock.calls.length
+			document.dispatchEvent(new Event('visibilitychange'))
+			expect(play.mock.calls.length).toBe(playCallsAfterUserPause)
+		} finally {
+			Reflect.deleteProperty(document, 'hidden')
+		}
+
+		pool.destroy()
+	})
+
+	it('ensureActive promotes an already-warmed target on a full pool without any attach', async () => {
+		const { PlayerPool } = await import('./player-pool')
+		const pool = new PlayerPool()
+
+		pool.applyWindow({
+			active: { index: 5, src: '5.m3u8' },
+			warm: [
+				{ index: 4, src: '4.m3u8' },
+				{ index: 6, src: '6.m3u8' },
+			],
+		})
+		await flush()
+
+		const instancesBefore = hlsInstances.length
+		const warmSlot = getSlots(pool).find((slot) => slot.index === 4)
+		if (!warmSlot?.hls) throw new Error('warm slot missing hls')
+
+		// The flick settles on an index that is already warmed.
+		pool.ensureActive({ index: 4, src: '4.m3u8' })
+		await flush()
+
+		// Promotion reconfigures in place — no new hls, nothing destroyed.
+		expect(hlsInstances.length).toBe(instancesBefore)
+		for (const hls of hlsInstances) {
+			expect(hls.destroy).not.toHaveBeenCalled()
+		}
+
+		// Promoted slot got the active buffer profile and resumed loading.
+		expect(warmSlot.hls.config.maxBufferLength).toBe(20)
+		expect(warmSlot.hls.startLoad).toHaveBeenCalled()
+
+		// The previously-active slot is demoted to warm, not freed.
+		const prevActive = getSlots(pool).find((slot) => slot.index === 5)
+		expect(prevActive?.hls?.config.maxBufferLength).toBe(5)
+
+		const indexes = getSlots(pool).map((slot) => slot.index)
+		expect(indexes).toContain(4)
+		expect(indexes).toContain(5)
+		expect(indexes).toContain(6)
+
+		pool.destroy()
+	})
+
+	it('togglePlayPause is a no-op after applyWindow evicts the claimed slot', async () => {
+		const { PlayerPool } = await import('./player-pool')
+		const pool = new PlayerPool()
+		const container = document.createElement('div')
+		const play = HTMLMediaElement.prototype.play as ReturnType<typeof vi.fn>
+
+		pool.claim({ index: 0, src: '0.m3u8' }, container, {
+			onStatus: vi.fn(),
+		})
+		await flush()
+
+		// Shift the window far away while the claim is still held — the
+		// claimed slot is evicted and freeSlot must clear the active claim.
+		pool.applyWindow({
+			active: { index: 5, src: '5.m3u8' },
+			warm: [
+				{ index: 6, src: '6.m3u8' },
+				{ index: 4, src: '4.m3u8' },
+			],
+		})
+		await flush()
+
+		// jsdom elements report paused=true, so a surviving claim would call
+		// play() here — a cleared claim makes the toggle do nothing.
+		const playCallsBefore = play.mock.calls.length
+		pool.togglePlayPause()
+		expect(play.mock.calls.length).toBe(playCallsBefore)
 
 		pool.destroy()
 	})

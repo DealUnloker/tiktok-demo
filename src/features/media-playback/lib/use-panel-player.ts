@@ -5,8 +5,8 @@ import { playerPool } from '../model/player-pool'
 
 // Layout effect on the client, plain effect during SSR rendering (React warns
 // about useLayoutEffect in server output). The claim MUST run before paint:
-// panels mount mid-gesture under renderOnlyVisible, and a passive effect
-// would paint one frame of poster before the warmed video element lands.
+// panels mount mid-gesture under the virtualization window, and a passive
+// effect would paint an empty frame before the warmed video element lands.
 const useIsomorphicLayoutEffect =
 	typeof window === 'undefined' ? useEffect : useLayoutEffect
 
@@ -36,15 +36,10 @@ export function usePanelPlayer(
 		if (!el) return
 
 		const release = playerPool.claim(
-			entry.index,
-			entry.src,
+			entry,
 			el,
 			{ onStatus: setStatus },
-			{
-				play,
-				userInitiated: userInitiatedRef.current,
-				startSec: entry.startSec,
-			},
+			{ play, userInitiated: userInitiatedRef.current },
 		)
 		userInitiatedRef.current = false
 

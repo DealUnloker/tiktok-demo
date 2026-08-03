@@ -85,6 +85,9 @@ export function FeedPanel({
 				<div className='absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-4 pt-16 pr-20'>
 					<p className='font-semibold text-white'>{item.title}</p>
 					<p className='text-sm text-white/80'>{item.author.name}</p>
+					<p className='mt-1 line-clamp-2 text-sm text-white/60'>
+						{item.description}
+					</p>
 				</div>
 			</div>
 		</div>

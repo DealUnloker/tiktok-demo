@@ -2,19 +2,22 @@
 
 import { Volume2, VolumeX } from 'lucide-react'
 import { useEffect, useRef } from 'react'
-import { usePlaybackStore } from '@/features/media-playback/model/playback.store'
 import { Button } from '@/shared/ui/button'
 import { Slider } from '@/shared/ui/slider'
+import { usePlaybackStore } from '../model/playback.store'
 
 // Mute toggle + vertical volume slider (default 50%). Dragging to zero
 // mutes, dragging up from zero unmutes — the store keeps them linked.
 //
 // UX guards (the YouTube-player pattern):
-// - an enlarged invisible hit zone around the capsule keeps the hover open
-//   and swallows near-miss clicks so they never reach the tap-to-pause layer;
-// - every input inside the zone (pointer, wheel, keys) is isolated from the
-//   feed — dragging the slider must not scroll it, arrow keys must not
-//   change panels, and the wheel adjusts volume instead of scrolling.
+// - an enlarged invisible hit zone around the capsule keeps the hover open;
+//   near-miss presses can't reach the feed anyway (the zone wins hit-testing,
+//   and use-feed-drag cancels drags starting inside [data-volume-zone]);
+// - the wheel adjusts volume instead of scrolling the feed — a native
+//   passive:false listener, because React registers root wheel listeners
+//   passively and a synthetic onWheel could not preventDefault;
+// - arrow keys on the focused slider are kept from feed navigation by the
+//   [data-volume-zone] guard in the feed's keydown handler.
 export function VolumeControl() {
 	const muted = usePlaybackStore((state) => state.muted)
 	const volume = usePlaybackStore((state) => state.volume)
@@ -27,18 +30,6 @@ export function VolumeControl() {
 		const zone = zoneRef.current
 		if (!zone) return
 
-		// Native listeners, and CAREFUL: a blanket stopPropagation also kills
-		// React's own root-delegated events — the slider and the button would
-		// go dead. So: swallow only near-miss presses on the zone's padding
-		// (they must not turn into feed gestures), and let everything
-		// targeting the real controls bubble normally (Base UI
-		// pointer-captures its drag, and its `touch-none` control keeps
-		// native touch scrolling out).
-		const stopIfMiss = (event: Event) => {
-			const target = event.target as HTMLElement | null
-			if (target?.closest('button, [data-slot=slider]')) return
-			event.stopPropagation()
-		}
 		const onWheel = (event: WheelEvent) => {
 			event.stopPropagation()
 			event.preventDefault()
@@ -47,18 +38,8 @@ export function VolumeControl() {
 			state.setVolume(base + (event.deltaY > 0 ? -0.05 : 0.05))
 		}
 
-		const pressEvents = ['pointerdown', 'mousedown', 'touchstart'] as const
-		for (const name of pressEvents) {
-			zone.addEventListener(name, stopIfMiss)
-		}
 		zone.addEventListener('wheel', onWheel, { passive: false })
-
-		return () => {
-			for (const name of pressEvents) {
-				zone.removeEventListener(name, stopIfMiss)
-			}
-			zone.removeEventListener('wheel', onWheel)
-		}
+		return () => zone.removeEventListener('wheel', onWheel)
 	}, [])
 
 	const shownVolume = muted ? 0 : Math.round(volume * 100)
@@ -81,9 +62,10 @@ export function VolumeControl() {
 				>
 					{muted ? <VolumeX /> : <Volume2 />}
 				</Button>
-				{/* Mobile: the button is a plain mute toggle. Desktop: the
-				    slider unfolds on hover/keyboard focus. */}
-				<div className='grid h-0 place-items-center overflow-hidden opacity-0 transition-all duration-200 md:group-has-[:focus-visible]:h-24 md:group-has-[:focus-visible]:opacity-100 md:group-hover:h-24 md:group-hover:opacity-100'>
+				{/* Mobile: the button is a plain mute toggle and the slider is
+				    fully removed (`hidden` keeps the invisible thumb out of
+				    the tab order). Desktop: unfolds on hover/keyboard focus. */}
+				<div className='hidden h-0 place-items-center overflow-hidden opacity-0 transition-all duration-200 md:grid md:group-has-[:focus-visible]:h-24 md:group-has-[:focus-visible]:opacity-100 md:group-hover:h-24 md:group-hover:opacity-100'>
 					<div className='flex h-20 items-center'>
 						<Slider
 							orientation='vertical'
@@ -95,9 +77,7 @@ export function VolumeControl() {
 								const next = Array.isArray(value)
 									? value[0]
 									: value
-								setVolume(
-									(typeof next === 'number' ? next : 0) / 100,
-								)
+								setVolume((next ?? 0) / 100)
 							}}
 							className='[&_[data-slot=slider-range]]:bg-white [&_[data-slot=slider-track]]:bg-white/30'
 							aria-label='Громкость'

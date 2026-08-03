@@ -45,13 +45,21 @@ function ActionButton({
 	)
 }
 
+// Deterministic stand-in until the API serves real comment counts.
+function fakeCommentCount(index: number) {
+	return index * 3 + 7
+}
+
 export function PanelActions({ item }: { item: MediaItem }) {
 	const [liked, setLiked] = useState(false)
 	const likes = item.likes + (liked ? 1 : 0)
 
 	async function share() {
+		// Per-item link; becomes a real deep link once /[id] routing lands.
+		const url = new URL(window.location.href)
+		url.searchParams.set('item', String(item.index))
 		try {
-			await navigator.clipboard.writeText(window.location.href)
+			await navigator.clipboard.writeText(url.toString())
 			toast('Ссылка скопирована')
 		} catch {
 			toast('Не удалось скопировать ссылку')
@@ -74,7 +82,7 @@ export function PanelActions({ item }: { item: MediaItem }) {
 			</ActionButton>
 			<ActionButton
 				label='Комментарии'
-				count={formatCount(item.index * 3 + 7)}
+				count={formatCount(fakeCommentCount(item.index))}
 				onClick={() => toast('Комментарии появятся позже')}
 			>
 				<MessageCircle className='size-6' />

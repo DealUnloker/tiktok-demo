@@ -129,6 +129,11 @@ export class PlayerPool {
 
 	private freeSlot(slot: Slot) {
 		slot.generation += 1
+		// Eviction of the currently-claimed slot (fast-flick repurposing)
+		// must not leave visibility/pause handlers acting on repurposed media.
+		if (this.activeClaim?.slot === slot) {
+			this.activeClaim = null
+		}
 		if (slot.hls) {
 			slot.hls.destroy()
 			slot.hls = null
@@ -188,11 +193,15 @@ export class PlayerPool {
 							// unrecoverable — fall through to teardown
 						}
 					}
-					const wasClaimed = this.activeClaim?.slot === slot
+					// freeSlot clears activeClaim for this slot — grab the
+					// status callback first so the panel still learns about
+					// the failure.
+					const claimed =
+						this.activeClaim?.slot === slot
+							? this.activeClaim
+							: null
 					this.freeSlot(slot)
-					if (wasClaimed) {
-						this.activeClaim?.onStatus('error')
-					}
+					claimed?.onStatus('error')
 				})
 				hls.loadSource(src)
 				hls.attachMedia(slot.element)
@@ -317,6 +326,22 @@ export class PlayerPool {
 		return fallback
 	}
 
+	// Promote the slot holding the active index, demote every other occupied
+	// slot — shared tail of applyWindow/ensureActive.
+	private syncRoles() {
+		for (const slot of this.slots) {
+			if (slot.index === this.activeIndex && slot.role !== 'active') {
+				this.reconfigureRole(slot, 'active')
+			} else if (
+				slot.index !== null &&
+				slot.index !== this.activeIndex &&
+				slot.role !== 'warm'
+			) {
+				this.reconfigureRole(slot, 'warm')
+			}
+		}
+	}
+
 	applyWindow(entries: { active: PoolEntry; warm: PoolEntry[] }): void {
 		this.ensureInit()
 		this.activeIndex = entries.active.index
@@ -350,17 +375,7 @@ export class PlayerPool {
 			)
 		}
 
-		for (const slot of this.slots) {
-			if (slot.index === entries.active.index && slot.role !== 'active') {
-				this.reconfigureRole(slot, 'active')
-			} else if (
-				slot.index !== null &&
-				slot.index !== entries.active.index &&
-				slot.role !== 'warm'
-			) {
-				this.reconfigureRole(slot, 'warm')
-			}
-		}
+		this.syncRoles()
 	}
 
 	// Ensures/promotes only the active slot, demoting other slots' roles —
@@ -386,17 +401,7 @@ export class PlayerPool {
 			entry.startSec ?? 0,
 		)
 
-		for (const slot of this.slots) {
-			if (slot.index === entry.index && slot.role !== 'active') {
-				this.reconfigureRole(slot, 'active')
-			} else if (
-				slot.index !== null &&
-				slot.index !== entry.index &&
-				slot.role !== 'warm'
-			) {
-				this.reconfigureRole(slot, 'warm')
-			}
-		}
+		this.syncRoles()
 	}
 
 	setAutoLevelCap(cap: number): void {
@@ -413,17 +418,16 @@ export class PlayerPool {
 	// = a neighbor panel pre-mounting its warmed element paused, so the first
 	// frame is already visible while the swipe gesture is still in flight.
 	claim(
-		index: number,
-		src: string,
+		entry: PoolEntry,
 		container: HTMLElement,
 		callbacks: { onStatus: (status: PlayerStatus) => void },
 		options: {
 			play?: boolean
 			userInitiated?: boolean
-			startSec?: number
 		} = {},
 	): () => void {
 		this.ensureInit()
+		const { index, src } = entry
 		const shouldPlay = options.play !== false
 
 		const slot = this.ensureSlotForIndex(
@@ -432,7 +436,7 @@ export class PlayerPool {
 			shouldPlay ? 'active' : 'warm',
 			new Set([index]),
 			undefined,
-			options.startSec ?? 0,
+			entry.startSec ?? 0,
 		)
 		if (shouldPlay) {
 			this.activeIndex = index
@@ -446,12 +450,18 @@ export class PlayerPool {
 			container.appendChild(slot.element)
 		}
 		// A warmed slot already holds a decoded frame — report it so the
-		// poster can drop immediately instead of waiting for events.
+		// placeholder (spinner) can drop immediately instead of waiting for
+		// media events.
 		callbacks.onStatus(slot.element.readyState >= 2 ? 'ready' : 'loading')
 
 		// Debug-overlay metrics for the ACTIVE claim: TTFF (claim → first
 		// 'playing'), rebuffer time ('waiting' → 'playing'), dropped frames.
+		// Pool elements are reused across videos, so dropped frames must be
+		// reported relative to a per-claim baseline, not the element's
+		// lifetime counter.
 		const claimedAt = performance.now()
+		const droppedBaseline =
+			slot.element.getVideoPlaybackQuality?.()?.droppedVideoFrames ?? 0
 		let firstPlayingSeen = false
 		let rebufferStartedAt: number | null = null
 
@@ -475,8 +485,11 @@ export class PlayerPool {
 				}
 				rebufferStartedAt = null
 				metrics.reportDroppedFrames(
-					slot.element.getVideoPlaybackQuality?.()
-						?.droppedVideoFrames ?? 0,
+					Math.max(
+						0,
+						(slot.element.getVideoPlaybackQuality?.()
+							?.droppedVideoFrames ?? 0) - droppedBaseline,
+					),
 				)
 			}
 			callbacks.onStatus('playing')

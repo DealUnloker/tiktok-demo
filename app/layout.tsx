@@ -6,16 +6,16 @@ import './globals.css'
 
 export const metadata: Metadata = {
 	title: {
-		default: 'Frontend Template',
-		template: '%s | Frontend Template',
+		default: 'Лента',
+		template: '%s | Лента',
 	},
 	description:
-		'Next.js App Router template with Feature-Sliced Design and a typed OpenAPI client',
+		'Вертикальная лента коротких видео: автовоспроизведение, предзагрузка соседних роликов, виртуализация на любую длину',
 }
 
 export default function RootLayout({ children }: { children: ReactNode }) {
 	return (
-		<html lang='en'>
+		<html lang='ru'>
 			<body className='bg-background text-foreground antialiased'>
 				<AppProviders>{children}</AppProviders>
 				<Toaster />

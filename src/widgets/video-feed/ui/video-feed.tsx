@@ -7,18 +7,9 @@ import { feedInfiniteOptions } from '@/entities/media-item/api/feed.options'
 import { playerPool } from '@/features/media-playback/model/player-pool'
 import { Skeleton } from '@/shared/ui/skeleton'
 import { useFeedDrag } from '../lib/use-feed-drag'
-import { useFeedStore } from '../model/feed.store'
 import { preloadManager } from '../model/preload-manager'
 import { DebugMetrics } from './debug-metrics'
 import { FeedPanel } from './feed-panel'
-
-const SKELETON_KEYS = [
-	'skeleton-1',
-	'skeleton-2',
-	'skeleton-3',
-	'skeleton-4',
-	'skeleton-5',
-] as const
 
 // How many unrendered panels may remain before we prefetch the next page.
 const APPEND_THRESHOLD = 4
@@ -41,16 +32,14 @@ export function VideoFeed() {
 	// True initially: no gesture is in flight on mount, so the first
 	// neighbors warm up as soon as the preload debounce fires.
 	const [settled, setSettled] = useState(true)
-	const activeIndex = useFeedStore((state) => state.activeIndex)
+	// Plain component state: only this widget reads it, and it dies with the
+	// component on navigation — no store, no reset ritual.
+	const [activeIndex, setActiveIndex] = useState(0)
 
 	useEffect(() => {
 		return () => {
 			playerPool.destroy()
 			preloadManager.destroy()
-			// The store survives SPA navigation; without a reset a remounted
-			// feed starts at scrollTop 0 while activeIndex still points at
-			// the old position — nothing plays until the first swipe.
-			useFeedStore.getState().setActiveIndex(0)
 		}
 	}, [])
 
@@ -90,10 +79,8 @@ export function VideoFeed() {
 			const panelHeight = el.clientHeight
 			if (panelHeight > 0) {
 				const index = Math.round(el.scrollTop / panelHeight)
-				const store = useFeedStore.getState()
-				if (index !== store.activeIndex) {
-					store.setActiveIndex(index)
-				}
+				// Functional update bails out when the index is unchanged.
+				setActiveIndex((prev) => (prev === index ? prev : index))
 			}
 			setSettled(false)
 			if (debounce) clearTimeout(debounce)
@@ -153,11 +140,11 @@ export function VideoFeed() {
 	}, [])
 
 	if (isPending) {
+		// Full-bleed dark splash matching the feed itself — reachable only on
+		// a client-side remount without hydrated data.
 		return (
-			<div className='flex flex-col gap-3 p-4'>
-				{SKELETON_KEYS.map((key) => (
-					<Skeleton key={key} className='h-16 w-full' />
-				))}
+			<div className='flex h-dvh w-full items-center justify-center bg-black'>
+				<Skeleton className='size-14 rounded-full bg-white/10' />
 			</div>
 		)
 	}

@@ -32,6 +32,47 @@ describe('getFeedPage', () => {
 		expect(() => feedPageSchema.parse(page)).not.toThrow()
 	})
 
+	it('scatters adjacent items: no two neighbors share both stream and start', async () => {
+		const page = await getFeedPage(0, 10)
+		expect(page.items).toHaveLength(10)
+
+		const clipKeys = page.items.map(
+			(item) => `${item.hlsUrl}#${item.startSec}`,
+		)
+		for (let i = 0; i < clipKeys.length - 1; i++) {
+			expect(clipKeys[i]).not.toBe(clipKeys[i + 1])
+		}
+	})
+
+	it('keeps every clip start at least 15s from the end of its stream', async () => {
+		const { items } = await getFeedPage(0, 300, { simulateLatency: false })
+		expect(items).toHaveLength(300)
+
+		// Derive each stream's duration from the page data itself: clip ends
+		// never exceed the stream, so max(startSec + durationSec) per stream
+		// is a safe (conservative) lower bound for the real duration.
+		const streamDurations = new Map<string, number>()
+		for (const item of items) {
+			const end = item.startSec + item.durationSec
+			const known = streamDurations.get(item.hlsUrl) ?? 0
+			if (end > known) streamDurations.set(item.hlsUrl, end)
+		}
+
+		for (const item of items) {
+			expect(item.startSec).toBeGreaterThanOrEqual(0)
+			expect(item.durationSec).toBeGreaterThan(0)
+			const streamDuration = streamDurations.get(item.hlsUrl) ?? 0
+			expect(item.startSec + 15).toBeLessThanOrEqual(streamDuration)
+		}
+	})
+
+	it('is deterministic for a deep page (cursor 500)', async () => {
+		const first = await getFeedPage(500, 10, { simulateLatency: false })
+		const second = await getFeedPage(500, 10, { simulateLatency: false })
+		expect(first).toStrictEqual(second)
+		expect(first.items[0]?.index).toBe(500)
+	})
+
 	it('serves 100+ unique virtual clips (stream + start position)', async () => {
 		const pages = await Promise.all([
 			getFeedPage(0, 20),

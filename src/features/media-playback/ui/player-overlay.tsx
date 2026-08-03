@@ -1,9 +1,9 @@
 'use client'
 
 import { Play } from 'lucide-react'
-import type { PlayerStatus } from '@/features/media-playback/model/player-pool'
-import { VolumeControl } from '@/features/media-playback/ui/volume-control'
 import { Button } from '@/shared/ui/button'
+import type { PlayerStatus } from '../model/player-pool'
+import { VolumeControl } from './volume-control'
 
 type PlayerOverlayProps = {
 	status: PlayerStatus
