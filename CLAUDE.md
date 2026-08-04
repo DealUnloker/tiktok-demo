@@ -42,8 +42,9 @@ src/
     `@/pages/feed/ui/feed-page`. Do not create slice `index.ts` files.
   - `fsd/insignificant-slice: warn` — a slice referenced from only one place
     is a warning, not an error.
-  - `fsd/segments-by-purpose: off` — the conventional `providers` segment in
-    the app layer would be flagged otherwise.
+  - `fsd/segments-by-purpose: off` for `src/app/**` only — `providers` is the
+    conventional app-layer segment name, but steiger-plugin >=0.7 flags it as
+    essence-based. The rule stays active on all other layers.
 - Layer imports go strictly downward only:
   pages → widgets → features → entities → shared. A slice must not import from
   its own layer (e.g. entity → entity) or any layer above.

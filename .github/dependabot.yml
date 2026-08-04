@@ -10,6 +10,10 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # steiger has no TypeScript 7 support yet — skip TS 7 bumps for now
+      - dependency-name: typescript
+        versions: ['>=7']
 
   - package-ecosystem: github-actions
     directory: /

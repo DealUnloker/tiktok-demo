@@ -57,19 +57,16 @@
 		"indentStyle": "tab",
 		"indentWidth": 4
 	},
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
 	"files": {
 		"includes": [
-			"**/*.{js,jsx,ts,tsx,json,md,mdx,yml,yaml,html,css,scss,sass}",
-			"!node_modules",
+			"**/*.{js,jsx,cjs,mjs,ts,tsx,json,jsonc,css}",
 			"!generated",
-			"!public",
-			"!.next",
-			"!coverage",
-			"!test-results",
-			"!playwright-report",
-			"!blob-report",
-			"!next-env.d.ts",
-			".git"
+			"!public"
 		],
 		"ignoreUnknown": true
 	}

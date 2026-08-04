@@ -1,7 +1,8 @@
 allowBuilds:
   lefthook: true
   sharp: true
-onlyBuiltDependencies:
-  - esbuild
-  - lefthook
-  - sharp
+minimumReleaseAge: 480
+peerDependencyRules:
+  allowedVersions:
+    # tsconfck (via steiger) wants typescript ^5; TS 6 works fine with it
+    'tsconfck>typescript': '>=6'
