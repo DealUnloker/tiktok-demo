@@ -162,6 +162,15 @@ export class PlayerPool {
 				// not from the captured argument.
 				const hls = new HlsCtor({
 					...ROLE_CONFIG[slot.role],
+					// Never fetch a variant larger than the element showing it:
+					// the feed column is ~530px wide even on desktop, so ABR
+					// would otherwise pull 1080p (measured: 30MB in the first
+					// two seconds, and a slower first frame from decoding it).
+					// The DPR share of that budget is capped too — a 3x phone
+					// screen would otherwise ask for 1080p again, which is
+					// invisible on a phone-sized frame and costs real traffic.
+					capLevelToPlayerSize: true,
+					maxDevicePixelRatio: 1.5,
 					// Virtual clip: buffer straight from the clip's start.
 					startPosition: startSec > 0 ? startSec : -1,
 				})

@@ -107,6 +107,11 @@ describe('PlayerPool', () => {
 		expect(hlsInstances).toHaveLength(2)
 		expect(hlsInstances[0]?.config.maxBufferLength).toBe(20)
 		expect(hlsInstances[1]?.config.maxBufferLength).toBe(5)
+		// Without this cap ABR pulls 1080p into a ~530px column: measured at
+		// 30MB of segments in the first two seconds.
+		for (const hls of hlsInstances) {
+			expect(hls.config.capLevelToPlayerSize).toBe(true)
+		}
 
 		pool.destroy()
 	})

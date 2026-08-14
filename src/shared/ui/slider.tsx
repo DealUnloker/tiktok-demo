@@ -8,6 +8,7 @@ function Slider({
 	value,
 	min = 0,
 	max = 100,
+	'aria-label': ariaLabel,
 	...props
 }: SliderPrimitive.Root.Props) {
 	const _values = Array.isArray(value)
@@ -28,6 +29,7 @@ function Slider({
 			min={min}
 			max={max}
 			thumbAlignment='edge'
+			aria-label={ariaLabel}
 			{...props}
 		>
 			<SliderPrimitive.Control className='relative flex w-full touch-none items-center select-none data-disabled:opacity-50 data-vertical:h-full data-vertical:min-h-0 data-vertical:w-8 data-vertical:flex-col'>
@@ -43,6 +45,10 @@ function Slider({
 				{Array.from({ length: _values.length }, (_, index) => (
 					<SliderPrimitive.Thumb
 						data-slot='slider-thumb'
+						// The thumb renders the real <input type="range">, and
+						// a label on the root does not reach it — axe flags the
+						// input as unlabeled without this.
+						getAriaLabel={ariaLabel ? () => ariaLabel : undefined}
 						// biome-ignore lint/suspicious/noArrayIndexKey: vendor shadcn code; thumb count is fixed per instance and never reorders
 						key={index}
 						className='relative block size-4 shrink-0 rounded-full border border-ring bg-white ring-ring/50 transition-[color,box-shadow] select-none after:absolute after:-inset-3 hover:ring-3 focus-visible:ring-3 focus-visible:outline-hidden active:ring-3 disabled:pointer-events-none disabled:opacity-50'
